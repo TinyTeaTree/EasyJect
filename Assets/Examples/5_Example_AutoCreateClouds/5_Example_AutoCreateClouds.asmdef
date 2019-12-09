@@ -1,0 +1,15 @@
+{
+    "name": "5_Example_AutoCreateClouds",
+    "references": [
+        "GUID:a12ebc1c042bd0348922af806c5dba4e"
+    ],
+    "optionalUnityReferences": [],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": []
+}
