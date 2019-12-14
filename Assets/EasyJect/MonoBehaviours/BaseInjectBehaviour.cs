@@ -36,7 +36,7 @@ namespace EasyJect.Internal
 
             if( ConsumeInject)
             {
-                InjectionSystem.InjectBehaviour(this);
+                InjectionSystem.InjectBehaviourInner(this);
             }
         }
 
@@ -53,7 +53,7 @@ namespace EasyJect.Internal
         protected SignalType GetSignal<SignalType>()
             where SignalType : class
         {
-            var signalObject = InjectionSystem.GetSignal(typeof(SignalType));
+            var signalObject = InjectionSystem.GetOrCreateSignal(typeof(SignalType));
             if( signalObject != null )
             {
                 SignalType typedSignal = signalObject as SignalType;

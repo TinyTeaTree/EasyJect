@@ -8,86 +8,6 @@ namespace EasyJect
 {
     public static class InjectionSystem
     {
-        public class InjectionBinder
-        {
-            private Dictionary<Type, object> _behaviours = new Dictionary<Type, object>();
-            private Dictionary<Type, object> _signals = new Dictionary<Type, object>();
-            private Dictionary<Type, object> _clouds = new Dictionary<Type, object>();
-            private Dictionary<Type, object> _interfaces = new Dictionary<Type, object>();
-
-            public void BindBehaviour<T>(T behaviour)
-                where T : BaseInjectBehaviour
-            {
-                _behaviours.Add(typeof(T), behaviour);
-            }
-
-            public void BindSignal<T>(T signal)
-                where T : BaseSignal
-            {
-                _signals.Add(typeof(T), signal);
-            }
-
-            public void BindCloud<T>(T cloud)
-                where T : class
-            {
-                _clouds.Add(typeof(T), cloud);
-            }
-
-            public void BindInterface<T>(T implementation)
-                where T : class
-            {
-                _interfaces.Add(typeof(T), implementation);
-            }
-
-            public void InitializeBindings()
-            {
-                foreach(var kvp in _behaviours)
-                {
-                    AddBehaviourToSystem(kvp.Value, kvp.Key);
-                }
-                foreach (var kvp in _signals)
-                {
-                    AddSignalToSystem(kvp.Value, kvp.Key);
-                }
-                foreach (var kvp in _clouds)
-                {
-                    RegisterCloudToSystem(kvp.Value, kvp.Key);
-                }
-                foreach(var kvp in _interfaces)
-                {
-                    RegisterInterfaceToSystem(kvp.Value, kvp.Key);
-                }
-            }
-
-            public void InjectIntoBindings()
-            {
-                foreach (var kvp in _behaviours)
-                {
-                    PopulateBehaviourToSystem(kvp.Value as BaseInjectBehaviour);
-                }
-
-                foreach (var kvp in _clouds)
-                {
-                    InjectBehaviourInner(kvp.Value);
-                }
-            }
-
-            public void CallCloudStart()
-            {
-                foreach (var kvp in _clouds)
-                {
-                    InjectionSystem.CallStartMethod(kvp.Value);
-                }
-            }
-
-            public void Reset()
-            {
-                _behaviours.Clear();
-                _signals.Clear();
-                _clouds.Clear();
-            }
-        }
-
         private static readonly Type SINGLETON_ATTR_TYPE = typeof(Singleton);
         private static readonly Type BASE_BEHAVIOUR_TYPE = typeof(BaseInjectBehaviour);
         private static readonly Type BASE_SIGNAL_TYPE = typeof(BaseSignal);
@@ -129,17 +49,17 @@ namespace EasyJect
         public static InjectSystemDelegate _systemDelegate = new InjectSystemDelegate();
 #endif
 
-        private static Dictionary<Type, object> _behaviourDictionary = new Dictionary<Type, object>();
-        private static Dictionary<Type, object> _registerableDictionary = new Dictionary<Type, object>();
-        private static Dictionary<Type, List<Action<object>>> _postponedInjectionsDictionary = new Dictionary<Type, List<Action<object>>>();
-        private static Dictionary<Type, object> _signalDictionary = new Dictionary<Type, object>();
+        internal static Dictionary<Type, object> _behaviourDictionary = new Dictionary<Type, object>();
+        internal static Dictionary<Type, object> _registerableDictionary = new Dictionary<Type, object>();
+        internal static Dictionary<Type, List<Action<object>>> _postponedInjectionsDictionary = new Dictionary<Type, List<Action<object>>>();
+        internal static Dictionary<Type, object> _signalDictionary = new Dictionary<Type, object>();
 
-        private static Dictionary<Type, object> _cloudDictionary = new Dictionary<Type, object>();
-        private static Dictionary<Type, object> _cloudSingletonsDictionary = new Dictionary<Type, object>();
-        private static Dictionary<Type, object> _interfaceDictionary = new Dictionary<Type, object>();
+        internal static Dictionary<Type, object> _cloudDictionary = new Dictionary<Type, object>();
+        internal static Dictionary<Type, object> _cloudSingletonsDictionary = new Dictionary<Type, object>();
+        internal static Dictionary<Type, object> _interfaceDictionary = new Dictionary<Type, object>();
 
-        private static bool _bindingsApplyAttempted;
-        public static InjectionBinder Binder = new InjectionBinder();
+        internal static bool _bindingsApplyAttempted;
+        internal static InternalInjectionBinder Binder = new InternalInjectionBinder();
 
         public static void Reset()
         {
@@ -178,6 +98,9 @@ namespace EasyJect
         internal static void AutoCreateEntities(BaseInjectionBinder binder)
         {
             var typeDic = InjectionUtils.GetTypesWithAttribute<AutoCreateAttribute>();
+            List<object> cloudsCreated = new List<object>();
+            List<object> signalsCreated = new List<object>();
+
             foreach(var typeKVP in typeDic)
             {
                 var type = typeKVP.Key;
@@ -187,26 +110,48 @@ namespace EasyJect
                 if( binderType != null &&
                     binder.GetType().IsAssignableFrom(binderType) == false)
                 {
-                    continue; //This entity does permit auto creation from this binder
+                    continue; //This entity does not permit auto creation from this binder
                 }
 
                 if (BASE_SIGNAL_TYPE.IsAssignableFrom(type))
                 {
-                    GetSignal(type, "[AutoCreate]-" + type.ToString()); //This will create it if it does not already exists
+                    bool isNew;
+                    var newSignal = GetOrMakeSignal(type, out isNew, "[AutoCreate]-" + type.ToString());
+                    if( isNew)
+                    {
+                        signalsCreated.Add(newSignal);
+                    }
                 }
                 else if(InjectionUtils.GetAttribute<CloudAttribute>(type) != null)
                 {
                     if(_cloudDictionary.ContainsKey(type))
                     {
-                        continue; //Cloud already exists, this may be normal behaviour if two Scenes have have AutoCreate binders
+                        continue;
+                        /*
+                         *  Cloud already exists, 
+                         *  this may be normal behaviour if two Scenes 
+                         *  have invoked the AutoCreate via their binders
+                        */
                     }
 
-                    CreateCloud(type);
+                    cloudsCreated.Add(CreateCloud(type));
                 }
                 else
                 {
                     Debug.LogWarning("Can't AutoCreate type " + type.ToString() + " Ignoring");
                 }
+            }
+
+            foreach(var cloudCreated in cloudsCreated)
+            {
+                binder._onStart.AddOnce(() => InjectBehaviourInner(cloudCreated));
+                binder._onStartFinished.AddOnce(() => CallStartMethod(cloudCreated));
+            }
+
+            foreach (var signalCreate in signalsCreated)
+            {
+                binder._onStart.AddOnce(() => InjectSignal(signalCreate));            
+                binder._onStartFinished.AddOnce(() => CallSignalStart(signalCreate));
             }
         }
 
@@ -233,11 +178,6 @@ namespace EasyJect
         internal static void RemoveBehaviour(BaseInjectBehaviour behaviour)
         {
             RemoveBehaviourInner(behaviour);
-        }
-
-        internal static void InjectBehaviour(BaseInjectBehaviour behaviour)
-        {
-            InjectBehaviourInner(behaviour);
         }
 
         internal static void InjectCommand(Command command)
@@ -342,7 +282,7 @@ namespace EasyJect
             return null;
         }
 
-        private static void InjectBehaviourInner(object obj)
+        internal static void InjectBehaviourInner(object obj)
         {
             List<System.Type> typeChain = InjectionUtils.GetObjectTypeChain(obj);
 
@@ -524,7 +464,7 @@ namespace EasyJect
             Type propType = prop.PropertyType;
 
             var signalType = propType.GetGenericArguments()[0];
-            object signal = GetSignal(signalType, propType.Name);
+            object signal = GetOrCreateSignal(signalType, propType.Name);
             object listener = Activator.CreateInstance(propType, signal);
             prop.SetValue(obj, listener, null);
         }
@@ -534,7 +474,7 @@ namespace EasyJect
             Type propType = prop.PropertyType;
 
             var signalType = propType.GetGenericArguments()[0];
-            object signal = GetSignal(signalType, propType.Name);
+            object signal = GetOrCreateSignal(signalType, propType.Name);
             object invoker = Activator.CreateInstance(propType, signal);
             prop.SetValue(obj, invoker, null);
         }
@@ -665,12 +605,12 @@ namespace EasyJect
 
         private static void InjectSignal(PropertyInfo prop, object obj)
         {
-            object signal = GetSignal(prop.PropertyType, prop.Name);
+            object signal = GetOrCreateSignal(prop.PropertyType, prop.Name);
 
             prop.SetValue(obj, signal, null);
         }
 
-        internal static object GetSignal(Type signalType, string name = null)
+        internal static object GetOrMakeSignal(Type signalType, out bool isNew, string name = null)
         {
             object signal;
             if (_signalDictionary.TryGetValue(signalType, out signal) == false)
@@ -681,13 +621,35 @@ namespace EasyJect
 
                 _signalDictionary.Add(signalType, signal);
 
-                PopulateSignalAndInvokeStartupMethods(signal);
+                isNew = true;
+            }
+            else
+            {
+                isNew = false;
             }
 
             return signal;
         }
 
-        private static void PopulateSignalAndInvokeStartupMethods(object signal)
+        internal static object GetOrCreateSignal(Type signalType, string name = null)
+        {
+            object signal;
+            if (_signalDictionary.TryGetValue(signalType, out signal) == false)
+            {
+                signal = System.Activator.CreateInstance(signalType);
+                signal.GetType().GetProperty("Name", BindingFlags.NonPublic | BindingFlags.Instance)
+                    .SetValue(signal, name ?? signalType.ToString(), null);
+
+                _signalDictionary.Add(signalType, signal);
+
+                InjectSignal(signal);
+                CallSignalStart(signal);
+            }
+
+            return signal;
+        }
+
+        internal static void InjectSignal(object signal)
         {
             InjectBehaviourInner(signal);
 
@@ -700,7 +662,10 @@ namespace EasyJect
             {
                 Debug.LogWarning("Did not find population field to apply populated state");
             }
+        }
 
+        internal static void CallSignalStart(object signal)
+        {
             InjectionUtils.CallAttributedMethod(signal, START_ATTR_TYPE, INSTANCE_METHOD_FLAGS);
         }
 
@@ -722,8 +687,6 @@ namespace EasyJect
         {
             var newCloud = Activator.CreateInstance(type);
             RegisterCloudToSystem(newCloud, type);
-            InjectBehaviourInner(newCloud);
-            CallStartMethod(newCloud);
             return newCloud;
         }
 
@@ -733,29 +696,20 @@ namespace EasyJect
             object newCloud;
             if (_cloudDictionary.TryGetValue(propType, out newCloud) == false)
             {
-                var autoCreate = prop.PropertyType.GetCustomAttribute<AutoCreateAttribute>();
-                if( autoCreate != null)
-                {
-                    newCloud = CreateCloud(prop.PropertyType);
-                }
-            }
-
-            if( newCloud == null)
-            {
-                Debug.LogWarning("Cloud is not injected, because system does not have it, and can't auto create it " + prop.PropertyType + " in " + obj.GetType());
+                Debug.LogWarning("Cloud is not injected, because system does not have it " + prop.PropertyType + " in " + obj.GetType());
                 return;
             }
 
             prop.SetValue(obj, newCloud, null);
         }
 
-        private static void AddBehaviourToSystem(object behaviour, Type type)
+        internal static void AddBehaviourToSystem(object behaviour, Type type)
         {
             _behaviourDictionary.Add(type, behaviour);
             RegisterBehaviourSingletonProperty(behaviour, type);
         }
 
-        private static void AddSignalToSystem(object signal, Type type)
+        internal static void AddSignalToSystem(object signal, Type type)
         {
             if (_signalDictionary.ContainsKey(type))
             {
@@ -764,10 +718,9 @@ namespace EasyJect
             }
 
             _signalDictionary[type] = signal;
-            PopulateSignalAndInvokeStartupMethods(signal);
         }
 
-        private static void RegisterCloudToSystem(object cloud, Type type)
+        internal static void RegisterCloudToSystem(object cloud, Type type)
         {
             if(_cloudDictionary.ContainsKey(type))
             {
@@ -786,7 +739,7 @@ namespace EasyJect
             LookupRegisterableInterfaces(cloud, type);
         }
 
-        private static void RegisterInterfaceToSystem(object implementation, Type interfaceType)
+        internal static void RegisterInterfaceToSystem(object implementation, Type interfaceType)
         {
             if(_interfaceDictionary.ContainsKey(interfaceType))
             {
@@ -798,7 +751,7 @@ namespace EasyJect
             InjectPostponedConsumers(implementation, interfaceType);
         }
 
-        private static void LookupRegisterableMembers(object obj, Type type)
+        internal static void LookupRegisterableMembers(object obj, Type type)
         {
             var props = type.GetProperties(BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
             foreach(var p in props)
@@ -853,7 +806,7 @@ namespace EasyJect
             }
         }
 
-        private static void LookupRegisterableInterfaces(object obj, Type type)
+        internal static void LookupRegisterableInterfaces(object obj, Type type)
         {
             var interfaces = type.GetInterfaces();
 
@@ -867,20 +820,12 @@ namespace EasyJect
             }
         }
 
-        private static void PopulateBehaviourToSystem(BaseInjectBehaviour behaviour)
-        {
-            if(behaviour.ConsumeInject)
-            {
-                InjectBehaviourInner(behaviour);
-            }
-        }
-
         public static void PopulateCloudToSystem(object cloud)
         {
             InjectBehaviourInner(cloud);
         }
 
-        private static void CallStartMethod(object cloud)
+        internal static void CallStartMethod(object cloud)
         {
             InjectionUtils.CallAttributedMethod(cloud, START_ATTR_TYPE, INSTANCE_METHOD_FLAGS);
         }
