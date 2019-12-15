@@ -1,11 +1,24 @@
 ﻿using System.Collections.Generic;
-using System;
 using EasyJect.Internal;
+using System;
 
 namespace EasyJect
 {
     public class InternalInjectionBinder
     {
+        internal enum State
+        {
+            Init,
+            Registered,
+            Injected,
+            PostStarted
+        }
+
+        internal Signal _onStart { get; private set; } = new Signal();
+        internal Signal _onStartFinished { get; private set; } = new Signal();
+
+        internal State _state { get; private set; } = State.Init;
+
         private Dictionary<Type, object> _behaviours = new Dictionary<Type, object>();
         private Dictionary<Type, object> _signals = new Dictionary<Type, object>();
         private Dictionary<Type, object> _clouds = new Dictionary<Type, object>();
@@ -35,7 +48,7 @@ namespace EasyJect
             _interfaces.Add(typeof(T), implementation);
         }
 
-        public void InitializeBindings()
+        public void RegisterBindings()
         {
             foreach (var kvp in _behaviours)
             {
@@ -53,6 +66,8 @@ namespace EasyJect
             {
                 InjectionSystem.RegisterInterfaceToSystem(kvp.Value, kvp.Key);
             }
+
+            _state = State.Registered;
         }
 
         public void InjectIntoBindings()
@@ -75,18 +90,18 @@ namespace EasyJect
                 InjectionSystem.InjectSignal(kvp.Value);
             }
 
-            foreach(var kvp in _signals)
-            {
-                InjectionSystem.CallSignalStart(kvp.Value);
-            }
+            _state = State.Injected;
         }
 
-        public void CallCloudStart()
+        public void InvokeStart()
         {
-            foreach (var kvp in _clouds)
-            {
-                InjectionSystem.CallStartMethod(kvp.Value);
-            }
+            _onStart.Invoke();
+            _onStart.RemoveAllListeners();
+
+            _onStartFinished.Invoke();
+            _onStartFinished.RemoveAllListeners();
+
+            _state = State.PostStarted;
         }
 
         public void Reset()
@@ -94,6 +109,8 @@ namespace EasyJect
             _behaviours.Clear();
             _signals.Clear();
             _clouds.Clear();
+            _interfaces.Clear();
+            _state = State.Init;
         }
     }
 }

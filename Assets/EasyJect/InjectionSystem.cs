@@ -144,14 +144,14 @@ namespace EasyJect
 
             foreach(var cloudCreated in cloudsCreated)
             {
-                binder._onStart.AddOnce(() => InjectBehaviourInner(cloudCreated));
-                binder._onStartFinished.AddOnce(() => CallStartMethod(cloudCreated));
+                Binder._onStart.AddOnce(() => InjectBehaviourInner(cloudCreated));
+                Binder._onStartFinished.AddOnce(() => CallStartMethod(cloudCreated));
             }
 
             foreach (var signalCreate in signalsCreated)
             {
-                binder._onStart.AddOnce(() => InjectSignal(signalCreate));            
-                binder._onStartFinished.AddOnce(() => CallSignalStart(signalCreate));
+                Binder._onStart.AddOnce(() => InjectSignal(signalCreate));
+                Binder._onStartFinished.AddOnce(() => CallSignalStart(signalCreate));
             }
         }
 
@@ -642,8 +642,18 @@ namespace EasyJect
 
                 _signalDictionary.Add(signalType, signal);
 
-                InjectSignal(signal);
-                CallSignalStart(signal);
+
+                if( Binder._state == InternalInjectionBinder.State.Registered || 
+                    Binder._state == InternalInjectionBinder.State.Injected)
+                {
+                    Binder._onStart.AddOnce(() => InjectSignal(signal));
+                    Binder._onStartFinished.AddOnce(() => CallSignalStart(signal));
+                }
+                else
+                {
+                    InjectSignal(signal);
+                    CallSignalStart(signal);
+                }
             }
 
             return signal;

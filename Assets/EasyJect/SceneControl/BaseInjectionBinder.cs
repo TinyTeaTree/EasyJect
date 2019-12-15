@@ -18,9 +18,6 @@ namespace EasyJect
 
         protected virtual bool ShouldAutoCreateAttributedEntities { get { return true; } }
 
-        internal Signal _onStart { get; private set; } = new Signal();
-        internal Signal _onStartFinished { get; private set; } = new Signal();
-
         protected void Awake()
         {
             Initialize();
@@ -28,14 +25,9 @@ namespace EasyJect
 
         protected void Start()
         {
-            _injectionBinder.CallCloudStart();
+            _injectionBinder.InvokeStart();
+
             _injectionBinder.Reset();
-
-            _onStart.Invoke();
-            _onStart = null;
-
-            _onStartFinished.Invoke();
-            _onStartFinished = null;
         }
 
         internal void Initialize()
@@ -48,10 +40,11 @@ namespace EasyJect
 
             InitializeBindings();
 
-            _injectionBinder.InitializeBindings();
-            _injectionBinder.InjectIntoBindings();
+            _injectionBinder.RegisterBindings();
 
             AutoCreateAttributedEntities();
+
+            _injectionBinder.InjectIntoBindings();
         }
 
         void AutoCreateAttributedEntities()
