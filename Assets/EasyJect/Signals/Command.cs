@@ -59,7 +59,7 @@
         {
             if (IsExecuting)
             {
-                UnityEngine.Debug.LogWarning("This command is already executing, ignoring Invokation");
+                UnityEngine.Debug.LogWarning($"This command {this.GetType()} is already executing, ignoring Invokation");
                 return;
             }
 
